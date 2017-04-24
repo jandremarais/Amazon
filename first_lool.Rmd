@@ -36,8 +36,9 @@ print(length(list.files("train-tif-sample")))
 TIFF is short for *tagged image file format* and is a computer file format for storing raster graphics images (which I believe is just a term for images represented by a matrix of pixels, each determined by a set of pixel intensities). GeoTIFF is just an extension of the TIFF file format allowing for georeferencing information to be embedded within a TIFF file (although this information was stripped for the competition). Each of the chips contain four bands of data: red, green, blue and near infrared (where standard images do not inlude the latter). There is also a JPG version of this collection stored in `train-jpg` (with file names `train_*.jpg`). 
 
 ```{r}
-print(head(list.files("train-jpg")))
-print(length(list.files("train-jpg")))
+# depends on machine using
+print(head(list.files("/home/jan/data/train-jpg")))
+print(length(list.files("/home/jan/data/train-jpg")))
 ```
 
 This is supposedly only for 'human' reference, since the *.tif* files contain much more information but is not that pleasant on the human eye. Nevetheless, the JPG version might be useful for inputs to pretrained ImagaNet models (since that is the type of format those models are trained on). This still needs to be investigated. The test set also has a GeoTIFF and JPG folder.
@@ -57,7 +58,7 @@ All of the classes are:
 ```{r}
 library(tidyverse)
 library(stringr)
-train_labels <- read_csv("train.csv")
+train_labels <- read_csv("/home/jan/data/train.csv")
 label_list <- strsplit(train_labels$tags, " ")
 L <- unique(unlist(label_list))
 print(L)
@@ -288,7 +289,7 @@ First I will work with the jpg files since the TIFF files have not completed dow
 library(raster)
 library(grid)
 
-temp <- brick('train-jpg/train_1.jpg')
+temp <- brick('/home/jan/data/train-jpg/train_1.jpg')
 dim(values(temp))
 #plotRGB(temp*(temp>=0), r = 2, g = 3, b = 1)
 ```
@@ -369,17 +370,18 @@ Since it is computationally expensive to create a data matrix of the 3 band, $25
 
 ```{r}
 library(pbapply)
-
 library(moments)
+library(parallel)
+#detectCores()
 
-X_list <- pblapply(list.files('train-jpg'), function(a) {
-  img <- brick(paste("train-jpg", a, sep = "/"))
+X_list <- mclapply(list.files('/home/jan/data/train-jpg'), function(a) {
+  img <- brick(paste("/home/jan/data/train-jpg", a, sep = "/"))
   c(apply(values(img), 2, function(a) {
     c(summary(a),
       kurt = kurtosis(a),
       skew = skewness(a))
   }))
-})
+}, mc.cores = 10)
 
 X_jpg <- do.call("rbind", X_list)
 
