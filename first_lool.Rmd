@@ -1,0 +1,386 @@
+---
+title: 'Planet: Understanding the Amazon from Space'
+author: "Jan Marais"
+date: '`r Sys.Date()`'
+output:
+  pdf_document: default
+  html_document: default
+subtitle: EDA and MLC investigation
+---
+
+```{r, echo=FALSE}
+knitr::opts_chunk$set(warning = FALSE, message = FALSE)
+```
+
+> This document includes my thoughts, side notes, code, system setup, additional information and discussion with respect to the analysis of the data. The end goal will be to include most (or at least) some of this content into my thesis.
+
+# Introduction
+
+Deforestation is a massive global problem, it leads to reduced biodiversity, habitat loss and climate change, among others. It is said that the world loses an area of forest the size of 48 football fields per minute. The area most affected is in the Amazon Basin. 
+
+Planet is the designer and builder of the world's largest constellation of Earth-imaging satellites. Along with their partner, SCONN, they believe tracking forest changes can be made easier with their high resolution images. The goal of the competition is to build an algorithm to automatically label satellite image chips with atmospheric conditions and various classes of cover/land use. This will help the global community better understand where, how and why deforestation happens, allowing governments and local stakeholders to respond more quickly and effectively.
+
+# Data
+
+## Images (chips)
+
+The data consists of a collection of satellite images (the images are also referred to as chips in this scenario). For the competition the data is already divided into training and test sets, with only the labels of the training set known to the competitors. There are multiple files relevant to the data. The collection of training images are stored as GeoTIFF files in the folder named `train-tif`, with each file in the folder named `train_*.tif`.
+
+For now I can only show the sample version since the full set has not completed with downloading.
+
+```{r}
+print(head(list.files("train-tif-sample")))
+print(length(list.files("train-tif-sample")))
+```
+
+TIFF is short for *tagged image file format* and is a computer file format for storing raster graphics images (which I believe is just a term for images represented by a matrix of pixels, each determined by a set of pixel intensities). GeoTIFF is just an extension of the TIFF file format allowing for georeferencing information to be embedded within a TIFF file (although this information was stripped for the competition). Each of the chips contain four bands of data: red, green, blue and near infrared (where standard images do not inlude the latter). There is also a JPG version of this collection stored in `train-jpg` (with file names `train_*.jpg`). 
+
+```{r}
+print(head(list.files("train-jpg")))
+print(length(list.files("train-jpg")))
+```
+
+This is supposedly only for 'human' reference, since the *.tif* files contain much more information but is not that pleasant on the human eye. Nevetheless, the JPG version might be useful for inputs to pretrained ImagaNet models (since that is the type of format those models are trained on). This still needs to be investigated. The test set also has a GeoTIFF and JPG folder.
+
+All of the pictures were taken between 1 January 2016 and 1 February 2017.
+
+## Labels
+
+`train.csv` contains the image names and the list of tags relevant to each image. The images were tagged using the Crowd Flower platform and other crowd sourced labour. Apparently it is easier to determine the labels: primary rainforest, agriculture, habitation, roads, water, and cloud conditions, but much harder to determine: shifting cultivation, slash and burn agriculture, blow down, mining, and other phenomenon. The organisers are convinced the data has a reasonable high signal to noise ratio, although the labels are not the ground truth.
+
+The labels can broadly be broken into three groups: atmospheric conditions, common land/cover use phenomena and rare land/cover use phenomena. Each chip (image) is associated with exactly one atmospheric condition label and zero or more common and rare labels. The chips labelled as cloudy, should not have any other labels. This, I found, however, is not true for the training said. There are quite a few images with the *cloudy* label in addition to other labels, commonly *primary*. In fact, this is the case for $\approx$ 15% of the images, as is shown later.
+
+An obvious method to follow would be to first classify the atmospheric conditions and then the rest, since the rest would depend on atmospheric labels. But this again introduces the label dependence dilemma. Theoretically, it should be possible for a classifier trained independently for say *water* to intrinsicly determine whether or not the picture is cloudy. But given the label *cloudy* beforehand, might make it easier for the classifier.
+
+All of the classes are:
+
+```{r}
+library(tidyverse)
+library(stringr)
+train_labels <- read_csv("train.csv")
+label_list <- strsplit(train_labels$tags, " ")
+L <- unique(unlist(label_list))
+print(L)
+```
+
+The atmospheric condition labels are given to an image when:
+
++ *cloudy* - 90% of the image is obscured with opaque cloud cover.
++ *partly_cloudy* - scenes show opaque cloud cover over any portion of the image (assume any portion less than 90%).
++ *haze* - clouds are visible but they are not so opaque as to obscure the ground.
++ *clear* - no evidence of clouds are in the chips. 
+
+**Examples of cloudy scenes**
+
+```{r Y, cache=TRUE}
+Y <- sapply(L, function(b) sapply(label_list, function(a) ifelse(b %in% a, 1, 0)))
+
+print(mean(sapply(label_list[Y[, "cloudy"] == 1], length) == 1))
+
+example_files <- lapply(L, function(a) {
+  train_labels[Y[, a] == 1, "image_name"] %>% 
+  slice(1:3) %>% 
+  unlist() %>% 
+  paste0(".jpg")
+})
+names(example_files) <- L
+```
+
+![](`r paste('train-jpg', example_files$cloudy[1], sep = '/')`)
+![](`r paste('train-jpg', example_files$cloudy[2], sep = '/')`)
+![](`r paste('train-jpg', example_files$cloudy[3], sep = '/')`)
+
+**Examples of partly_cloudy scenes**
+
+![](`r paste('train-jpg', example_files$partly_cloudy[1], sep = '/')`)
+![](`r paste('train-jpg', example_files$partly_cloudy[2], sep = '/')`)
+![](`r paste('train-jpg', example_files$partly_cloudy[3], sep = '/')`)
+
+**Examples of hazy scenes**
+
+![](`r paste('train-jpg', example_files$haze[1], sep = '/')`)
+![](`r paste('train-jpg', example_files$haze[2], sep = '/')`)
+![](`r paste('train-jpg', example_files$haze[3], sep = '/')`)
+
+**Examples of clear scenes**
+
+![](`r paste('train-jpg', example_files$clear[1], sep = '/')`)
+![](`r paste('train-jpg', example_files$clear[2], sep = '/')`)
+![](`r paste('train-jpg', example_files$clear[3], sep = '/')`)
+
+### Common Labels
+
+The common labels in this data set are identified in the following ways:
+
++ *primary*: the image is primarily consisting of rain forest (virgin forest), *i.e.* dense tree cover.
++ *agriculture*: the image contains any land cleared of trees that is being used for agriculture or range land.
++ *water*: the image contains any one of the following: rivers, reservoirs, and oxbow lakes.
++ *habitation*: the image contains human homes or buildings.
++ *road*: the image contains any type of road.
++ *cultivation*: no description is given
++ *bare_ground*: the image contains naturally (not the caused by humans) occuring tree-free areas.
+
+Examples of each class are given below.
+
+**Examples of primary**
+
+![](`r paste('train-jpg', example_files$primary[1], sep = '/')`)
+![](`r paste('train-jpg', example_files$primary[2], sep = '/')`)
+![](`r paste('train-jpg', example_files$primary[3], sep = '/')`)
+
+**Examples of agriculture**
+
+![](`r paste('train-jpg', example_files$agriculture[1], sep = '/')`)
+![](`r paste('train-jpg', example_files$agriculture[2], sep = '/')`)
+![](`r paste('train-jpg', example_files$agriculture[3], sep = '/')`)
+
+**Examples of water**
+
+![](`r paste('train-jpg', example_files$water[1], sep = '/')`)
+![](`r paste('train-jpg', example_files$water[2], sep = '/')`)
+![](`r paste('train-jpg', example_files$water[3], sep = '/')`)
+
+**Examples of habitation**
+
+![](`r paste('train-jpg', example_files$habitation[1], sep = '/')`)
+![](`r paste('train-jpg', example_files$habitation[2], sep = '/')`)
+![](`r paste('train-jpg', example_files$habitation[3], sep = '/')`)
+
+**Examples of road**
+
+![](`r paste('train-jpg', example_files$road[1], sep = '/')`)
+![](`r paste('train-jpg', example_files$road[2], sep = '/')`)
+![](`r paste('train-jpg', example_files$road[3], sep = '/')`)
+
+**Examples of cultivation**
+
+![](`r paste('train-jpg', example_files$cultivation[1], sep = '/')`)
+![](`r paste('train-jpg', example_files$cultivation[2], sep = '/')`)
+![](`r paste('train-jpg', example_files$cultivation[3], sep = '/')`)
+
+**Examples of bare_ground**
+
+![](`r paste('train-jpg', example_files$bare_ground[1], sep = '/')`)
+![](`r paste('train-jpg', example_files$bare_ground[2], sep = '/')`)
+![](`r paste('train-jpg', example_files$bare_ground[3], sep = '/')`)
+
+Some observations from the creators follow that might be useful for building a classifier:
+
++ Distinguishing between primary and secondary forests is very difficult.
++ Small, single-dwelling habitations are often difficult to spot but usually appear as clumps of a few pixels that are bright white. 
++ Some rivers look very similar to smaller logging roads, and consequently there may be some noise in this label. Analysis of the image using the near infrared band may prove useful in disambiguating the two classes.
++ Cultivation is a subset of agriculture and occurs in rural areas. (apparently very easy to see from space)
++ Cultivation is normally found near smaller villages along major rivers and at the outskirts of agricultural areas. It typically covers very small areas
+
+### Rare Labels
+
+The less common labels can be identified in the following way:
+
++ *slash_burn*: for areas that demonstrate recent burn events. Cultivation patches that appear to have dark brown or black areas.
++ *selective_logging*: this appears as winding dirt roads adjacent to bare brown patches in otherwise primary rain forest, which covers the practice of selectively removing high value tree species from the forest.
++ *blooming*: the blooming of a particular species of trees.
++ *conventional_mine*: no description.
++ *artisinal_mine*: no description.
++ *blow_down*: open areas from toppled trees.
+
+**Examples of slash_burn**
+
+![](`r paste('train-jpg', example_files$slash_burn[1], sep = '/')`)
+![](`r paste('train-jpg', example_files$slash_burn[2], sep = '/')`)
+![](`r paste('train-jpg', example_files$slash_burn[3], sep = '/')`)
+
+**Examples of selective_logging**
+
+![](`r paste('train-jpg', example_files$selective_logging[1], sep = '/')`)
+![](`r paste('train-jpg', example_files$selective_logging[2], sep = '/')`)
+![](`r paste('train-jpg', example_files$selective_logging[3], sep = '/')`)
+
+**Examples of blooming**
+
+![](`r paste('train-jpg', example_files$blooming[1], sep = '/')`)
+![](`r paste('train-jpg', example_files$blooming[2], sep = '/')`)
+![](`r paste('train-jpg', example_files$blooming[3], sep = '/')`)
+
+**Examples of conventional_mine**
+
+![](`r paste('train-jpg', example_files$conventional_mine[1], sep = '/')`)
+![](`r paste('train-jpg', example_files$conventional_mine[2], sep = '/')`)
+![](`r paste('train-jpg', example_files$conventional_mine[3], sep = '/')`)
+
+**Examples of artisinal_mine**
+
+![](`r paste('train-jpg', example_files$artisinal_mine[1], sep = '/')`)
+![](`r paste('train-jpg', example_files$artisinal_mine[2], sep = '/')`)
+![](`r paste('train-jpg', example_files$artisinal_mine[3], sep = '/')`)
+
+**Examples of blow_down**
+
+![](`r paste('train-jpg', example_files$blow_down[1], sep = '/')`)
+![](`r paste('train-jpg', example_files$blow_down[2], sep = '/')`)
+![](`r paste('train-jpg', example_files$blow_down[3], sep = '/')`)
+
+Some observation from the creators follow:
+
++ slash_burn can considered as a subset of the shifting cultivation label.
++ difference between conventional and artisinal mining is the scale.
++ artisinal mining seems to be near rivers.
+
+Looking at all of these class labels examples, it is quite apparent that some noise is inherent to the data.
+
+### Distribution of the labels
+
+```{r}
+data.frame(label = colnames(Y), count = apply(Y, 2, sum)) %>% 
+  mutate(label = factor(label, label[order(count, decreasing = TRUE)])) %>% 
+  ggplot(aes(label, count)) +
+  geom_histogram(stat = "identity") +
+  theme_minimal() +
+  theme(axis.text.x = element_text(angle = 90, hjust = 1, vjust = 0.5)) +
+  geom_text(aes(label = count), vjust = 0)
+```
+
+I am very curious to find out how difficult it will prove to be to train a classifier able to accurately predict the fewer occuring labels. Do not know if it is possible to learn from such a small set. A linear model might be the best option. 
+
+On the other hand, there are also very few examples not labelled as primary. We might have to be creative in modelling these unbalanced classes. Can add research here on how to handle class imbalances.
+
+### Correlation of the labels
+
+```{r}
+library(corrplot)
+corrplot(cor(Y))
+```
+
+We observe some negative correlations (based on the Pearson's Phi coefficient) between the atmospheric labels. This makes sense since the labels are supposed to mutually exclusive. There is also a very big negative correlation between *primary* and *cloudy*. I assume this is because *primary* it the majority class and that most of the times *primary* is not relevant is because it is *cloudy*. 
+
+*agriculture* seems to occur often along with *habitation*, *road* and *cultivation*. There is also some positive correlation between *road* and *habitation*, and *primary* and *clear*.
+
+This is only a rough estimate of the unconditional, global correlation of the variables. This is probably not that accurate since, it is more likely that the label dependencies are conditional on the features. Theoretically we are supposed to find an optimal multi-label classifier by training the labels independently, but exploiting label dependence might prove useful here since some of the classes are under-represented and some of the classes might be hard to train with the given observations.
+
+Since some of the labels have intuitive asymmetric dependence and some of the correlations are apparent in the corplot, it might be a good idea to try something like a classifier chain. This information may be helpful to determine the chain order.
+
+Add research here one label dependence. Check if the $\phi$ coefficient is what was used here and if it is related to $\chi^{2}$ -tests. See this article (Identification of Labels Dependencies for Multi-label Classification) on how they detected label correlations and their interesting approach to combine label BR and LP.
+
+What we can do next is to investigate some the multi-label characteristics of the data. The most common attribures of a multi-label dataset to measure are the label cardinality and the label density. The label cardinality is the average number labels per observation and the label density is this number divided by the size of the label set. For the training data we have the following:
+
+```{r data_att, cache=TRUE}
+lcard <- mean(apply(Y, 1, sum))
+ldens <- lcard/ncol(Y)
+```
+
++ cardinality: `r round(lcard, 4)`
++ density: `r round(ldens, 4)`
+
+There is a very interesting article, [@Chekina2011], where the authors built a meta-learner to predict the best multi-label classifier given properties and loss functions of the data. The meta-learner might be an useful tool, but in addition some insightful observations were made on how some properties affect the performance of a classifier. Investigate this.
+
+There are some other multi-label attributes that can be measured (see [@Gibaja2015a]) but first determine what the use would be.
+
+Consider doing a correspondence analyis or some other MDS type method to analyse the structure in the labels.
+
+## Features
+
+We have two options for features: the features extracted from the TIFF files and the those extracted from the JPG files. (I think) the only difference between them is that the TIFF files are images with 4 bands and the the JPG files are images with 3 bands, both having the RGB bands and TIFF an extra near-infrared bend. 
+
+I have some uncertainty working with the .tif files, since the values representing their pixel intensities are very high. I need some evidence to confirm that these values are in acceptable range.
+
+First I will work with the jpg files since the TIFF files have not completed downloading. The TIFF pixel intensities do not make sense.
+
+```{r}
+library(raster)
+library(grid)
+
+temp <- brick('train-jpg/train_1.jpg')
+dim(values(temp))
+#plotRGB(temp*(temp>=0), r = 2, g = 3, b = 1)
+```
+
+This means that each observation will have `r 65536*3` features. This seems quite a lot. Hopefully I can find an efficient way of dealing with this. I know CNN's are supposed to be the go-to algorithm for image processing. I will try this soon.
+
+Creating the training dataset (this might take a while):
+
+```{r, eval=FALSE}
+X_list <- lapply(list.files('train-jpg')[1:3], function(a) {
+  c(values(stack(paste("train-jpg", a, sep = "/"))))
+})
+
+```
+
+I am not sure if this is the right way to approach this (by directly making a data matrix). If it is, I have not yet found an efficient way of doing so in R.
+
++ I can try the `resize` function from the package `EBImage` or use only some of the channels. This will no doubt hamper the accuracy but it requires less computational power.
+
+# Loss function
+
+It is crucial to understand the evaluation metric for this competition - the mean $F_{2}$-score:
+
+$$
+(1+\beta^{2})\frac{pr}{\beta^{2}p+r},
+$$
+where $p$ denotes the precision, $p=tp/(tp+fp)$, and $r$ the recall, $r=tp/(tp+fn)$. ($tp$=*true positives*; $fp$: *false positives*; $fn$: *false negatives*). Here $\beta = 2$. Precision is portion of correctly predicted positives of all the predicted positives. Recall is the portion of correctly predicted positives of all the actual postives. This score is averaged over all observations. I will give an example to illustrate my understanding: suppose the actual image has the labels: *clear*, *primary*, *road* and *river*, and the classifier returns *haze*, *primary*, *road*. The number of:
+
++ $tp$'s is 2 (*primary* and *road*),
++ $fp$'s is 1 (*haze*) and
++ $fn$'s is 2 (*clear* and *river*).
+
+This gives a precision of 2/3 and a recall of 1/2. We can see that the precision penalises predictions with too many falsely predicted positives and recall penalises predictions with too many falsely predicted negatives (obvious from the formulae). Precision encourages small number of positive predictions and recall encourages large number of positive predictions. If the classifier returns all the labels in the label set for an image, the recall would be 1 (since there would be no false negatives), but the precision would be a minimum since the number of false positives would be a maximum. 
+
+For the above example the $F_{2}$-score is:
+
+$$
+(1+2^{2})\frac{\frac{2}{3}\times \frac{1}{2}}{2^{2}\times\frac{2}{3}+\frac{1}{2}}\approx 0.5263
+$$
+
+We see that this $F_{2}$-score weights the recall higher than the precision, *i.e.* encourages more positive predictions. This is because of $\beta=2$ - if $\beta=1$ the $F_{2}$-score would be the harmonic mean between precision and recall. This score is calculated for each image and then averaged. This metric falls into the example-based metrics of the ML literature (exactly the one described in [@Zhang2014]). 
+
+Let us see how this $F_{2}$ score acts on our data set. We have seen that *clear* and *primary* are the most common labels in the training set, followed by *agriculture*. Let us evaluate the $F_{2}$ score if we predict these 3 most common labels for each observation in the training set. First we need an R function for this measure. We create a function that takes the predicted and actual labels as indicator matrices and returns the $F_{2}$-score:
+
+```{r}
+F_score <- function(act_mat, pred_mat, B = 2) {
+  obs_scores <- sapply(1:nrow(act_mat), function(i) {
+    tp <- sum(act_mat[i, ] == pred_mat[i, ] & act_mat[i, ] == 1)
+    fp <- sum(act_mat[i, ] != pred_mat[i, ] & pred_mat[i, ] == 1)
+    fn <- sum(act_mat[i, ] != pred_mat[i, ] & pred_mat[i, ] == 0)
+    
+    prec <- tp/(tp+fp)
+    rec <- tp/(tp+fn)
+    
+    ifelse(tp != 0, (1+B^2) * (prec*rec)/(B^2 * prec + rec), 0)
+  })
+  mean(obs_scores)
+}
+
+# actual <- matrix(c(1,0,1,0,0,0,1,1,0), ncol = 3)
+# predicted <- matrix(c(1,0,1,0,1,0,0,0,1), ncol = 3)
+# 
+# F_score(actual, predicted)
+```
+
+(consider later to provide functionality for evaluating per label performance)
+
+```{r}
+Y_pred <- matrix(0, ncol = ncol(Y), nrow = nrow(Y))
+colnames(Y_pred) <- colnames(Y)
+Y_pred[, c("primary", "clear", "agriculture")] <- 1
+F_score(Y, Y_pred)
+```
+
+# Basic Features Model
+
+Since it is computationally expensive to create a data matrix of the 3 band, $256\times256$ pixel, images, we first consider a data matrix containing only the following extracted features from each image (jpeg): the minimum, maximum, mean, kurtosis and skewness of each channel.
+
+```{r}
+library(pbapply)
+
+library(moments)
+
+X_list <- pblapply(list.files('train-jpg'), function(a) {
+  img <- brick(paste("train-jpg", a, sep = "/"))
+  c(apply(values(img), 2, function(a) {
+    c(summary(a),
+      kurt = kurtosis(a),
+      skew = skewness(a))
+  }))
+})
+
+X_jpg <- do.call("rbind", X_list)
+
+```
