@@ -468,7 +468,7 @@ library(randomForest)
 mldr_train <- mldr_from_dataframe(data.frame(X, Y), labelIndices = (ncol(X)+1):(ncol(X)+ncol(Y)))
 
 mldr_train <- normalize_mldata(mldr_train)
-mldr_train <- remove_skewness_labels(mldr_train, 1000)
+#mldr_train <- remove_skewness_labels(mldr_train, 1000)
 
 mdata <- create_holdout_partition(mldr_train, c(train = 0.9, test = 0.1), "stratified")
 
@@ -504,8 +504,19 @@ utiml_measure_f1(temp)
 results <- multilabel_evaluate(mdata$test, predictions)
 print(round(results, 3))
 
-newpred <- fixed_threshold(predictions, 0.4)
-summary(newpred)
+newpred <- pcut_threshold(predictions, ratio = mdata$train$labels[, "count"]/nrow(mdata$train$dataset))
+temp <- multilabel_confusion_matrix(mdata$test, newpred)
+utiml_measure_f1(temp)
+
+newpred <- subset_correction(predictions, mdata$train)
+temp <- multilabel_confusion_matrix(mdata$test, newpred)
+utiml_measure_f1(temp)
+multilabel_evaluate(mdata$test, newpred)
+
+newpred <- fixed_threshold(predictions, 0.2)
+temp <- multilabel_confusion_matrix(mdata$test, newpred)
+utiml_measure_f1(temp)
+multilabel_evaluate(mdata$test, newpred)
 ```
 
 + I struggle to get good results with the `utiml` package. The package has nice utility functions but I feel a lack of control in the training process.
