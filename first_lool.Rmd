@@ -387,6 +387,8 @@ data.frame(label = names(sort(apply(Y, 2, sum), decreasing = TRUE)),
 
 It looks like the labels from *bare_ground* to *blow_down* are not that important to the loss function because they appear so infrequently. If Kaggle's test set has the same distribution, it might not be necessary to model the infrequent labels.
 
++ maybe check the paper on minimising the $F$-measure.
+
 # Basic Features Model
 
 Since it is computationally expensive to create a data matrix of the 3 band, $256\times256$ pixel, images, we first consider a data matrix containing only the following extracted features from each image (jpeg): the minimum, maximum, mean, kurtosis and skewness of each channel.
@@ -409,7 +411,8 @@ X_list <- mclapply(list.files('/home/jan/data/train-jpg'), function(a) {
 X <- do.call("rbind", X_list)
 dim(X)
 write_csv(data.frame(X), "/home/jan/data/X-sum-jpg.csv")
-X <- read_csv("/home/jan/data/X-sum-jpg.csv") %>% as.matrix()
+X <- read_csv("/home/jan/data/X-sum-jpg.csv",
+              col_types = paste(rep("d", 24), collapse = "")) %>% as.matrix()
 
 X_list <- mclapply(list.files('/home/jan/data/test-jpg'), function(a) {
   img <- brick(paste("/home/jan/data/test-jpg", a, sep = "/"))
@@ -422,7 +425,8 @@ X_list <- mclapply(list.files('/home/jan/data/test-jpg'), function(a) {
 
 X_test <- do.call("rbind", X_list)
 write_csv(data.frame(X_test), "/home/jan/data/X-sum-jpg-test.csv")
-X_test <- read_csv("/home/jan/data/X-sum-jpg-test.csv") %>% as.matrix()
+X_test <- read_csv("/home/jan/data/X-sum-jpg-test.csv", 
+                   col_types = paste(rep("d", 24), collapse = "")) %>% as.matrix()
 ```
 
 ## Sampling
@@ -484,8 +488,8 @@ library(utiml)
 
 # impute missing vals
 library(randomForest)
-X <- na.roughfix(X)
-X_test <- na.roughfix(X_test)
+#X <- na.roughfix(X)
+#X_test <- na.roughfix(X_test)
 
 
 mldr_train <- mldr_from_dataframe(data.frame(X, Y), labelIndices = (ncol(X)+1):(ncol(X)+ncol(Y)))
@@ -495,10 +499,132 @@ mldr_train <- remove_skewness_labels(mldr_train, 1000)
 
 mdata <- create_holdout_partition(mldr_train, c(train = 0.9, test = 0.1), "stratified")
 
-brmodel <- br(mdata$train, "SVM", cores = 12)
-predictions <- predict(brmodel, mdata$test)
+br_rf_model <- br(mdata$train, "RF", ntrees = 100, cores = 12)
+br_svm_model <- br(mdata$train, "SVM", cores = 12)
+predictions <- predict(br_rf_model, mdata$test, cores = 12)
+
+utiml_measure_f1 <- function (mlconfmat, ...) {
+  #sum((5 * mlconfmat$TPi) / (mlconfmat$Zi + mlconfmat$Yi), na.rm = TRUE) /
+  #  nrow(mlconfmat$Y)
+  prec <- mlconfmat$TPi/(mlconfmat$TPi + mlconfmat$FPi)
+  rec <- mlconfmat$TPi/(mlconfmat$TPi + mlconfmat$FNi)
+  sum((1+2^2) * (prec*rec)/(2^2 * prec + rec), na.rm = TRUE)/nrow(mlconfmat$Y)
+}
+temp <- multilabel_confusion_matrix(mdata$test, predictions)
+utiml_measure_f1(temp)
 results <- multilabel_evaluate(mdata$test, predictions)
 print(round(results, 3))
 ```
 
++ I struggle to get good results with the `utiml` package. The package has nice utility functions but I feel a lack of control in the training process.
 
+Let us try modelling each label manually, starting from the most frequent in decreasing order `r sort(apply(Y, 2, sum), decreasing = TRUE)`:
+
+## Primary
+
+First we create a function that can upsample from the data to create balanced datasets.
+
+```{r}
+upsample <- function(y) {
+  cnt <- table(y)
+  maj_class <- as.numeric(names(cnt[cnt==max(cnt)]))
+  min_class <- as.numeric(names(cnt[cnt==min(cnt)]))
+  
+  upsamp_ind <- sample((1:length(y))[y==min_class], 
+                       cnt[as.character(maj_class)]-cnt[as.character(min_class)], 
+                       replace = TRUE)
+  upsamp_ind
+}
+
+library(ROSE)
+temp <- ovun.sample(Y ~ ., data = data.frame(x_train, Y = y_train[, label]))
+```
+
+
+```{r}
+testsize <- nrow(x_valid)
+label <- "primary"
+ratio <- sum(y_train[, label] == 1)/sum(y_train[, label] == 0)
+weight <- rep(1/nrow(x_train), nrow(x_train))
+weight[y_train[, label] == 1] <- weight[y_train[, label] == 1] /ratio
+weight[y_train[, label] == 0] <- weight[y_train[, label] == 0] * ratio
+
+weight <- y_train[, label] * testsize / length(y_train[, label])
+
+sumwpos <- sum(weight * (y_train[, label]==1.0))
+sumwneg <- sum(weight * (y_train[, label]==0.0))
+
+sumwpos <- sum(y_train[, "primary"] == 1)
+sumwneg <- sum(y_train[, "primary"] == 0)
+
+xgmat_train <- xgb.DMatrix(x_train, label = y_train[, label])#, weight = weight)
+xgmat_valid <- xgb.DMatrix(x_valid, label = y_valid[, label])#, weight = weight)
+
+param <- list("objective" = "binary:logitraw",
+              #"scale_pos_weight" = 2,#sumwneg / sumwpos,
+              #"max_delta_step" = 5,
+              "bst:eta" = 0.3,
+              "gamma" = 0,
+              "bst:max_depth" = 10,
+              "eval_metric" = "auc",
+              "eval_metric" = "error",
+              "silent" = 1,
+              "nthread" = -1,
+              "lambda" = 1,
+              "alpha" = 0,
+              "subsample" = 0.5,
+              "colsample_bytree" = 0.8)
+watchlist <- list("train" = xgmat_train, "valid" = xgmat_valid)
+nround = 2000
+bst <- xgb.train(param, xgmat_train, nround, watchlist, print_every_n = 10)
+
+bst
+
+# save out model
+xgb.save(bst, "higgs.model")
+```
+
++ very little success!
+
++ try replicating observations for each label and then do multi-class classification:
+
+```{r}
+
+train_multi <- do.call("rbind", mclapply(1:nrow(x_train), function(i) {
+  rel_labels <- colnames(y_train)[y_train[i, ] == 1]
+  data.frame(x_train[rep(i, length(rel_labels)), , drop = FALSE], 
+             label = rel_labels, stringsAsFactors = FALSE)
+}, mc.cores = 12))
+
+valid_multi <- do.call("rbind", mclapply(1:nrow(x_valid), function(i) {
+  rel_labels <- colnames(y_valid)[y_valid[i, ] == 1]
+  data.frame(x_valid[rep(i, length(rel_labels)), , drop = FALSE], 
+             label = rel_labels, stringsAsFactors = FALSE)
+}, mc.cores = 12))
+
+xgmat_train <- xgb.DMatrix(as.matrix(train_multi[, 1:ncol(x_train)]),
+                           label = as.numeric(factor(train_multi$label))-1)
+xgmat_valid <- xgb.DMatrix(as.matrix(valid_multi[, 1:ncol(x_valid)]),
+                           label = as.numeric(factor(valid_multi$label))-1)
+
+param <- list("objective" = "multi:softmax",
+              #"scale_pos_weight" = sumwneg / sumwpos,
+              "bst:eta" = 0.1,
+              "gamma" = 0,
+              "bst:max_depth" = 10,
+              #"eval_metric" = "map",
+              "eval_metric" = "merror",
+              "silent" = 1,
+              "nthread" = -1,
+              "lambda" = 0,
+              "alpha" = 0,
+              "subsample" = 1,
+              "colsample_bytree" = 0.8,
+              "num_class" = 17)
+watchlist <- list("train" = xgmat_train, "valid" = xgmat_valid)
+nround = 2000
+bst <- xgb.train(param, xgmat_train, nround, watchlist, print_every_n = 10)
+
+```
+
++ this trains too slow
