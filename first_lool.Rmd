@@ -80,7 +80,7 @@ print(mean(sapply(label_list[Y[, "cloudy"] == 1], length) == 1))
 
 example_files <- lapply(L, function(a) {
   train_labels[Y[, a] == 1, "image_name"] %>% 
-  slice(1:3) %>% 
+  dplyr::slice(1:3) %>% 
   unlist() %>% 
   paste0(".jpg")
 })
@@ -364,6 +364,29 @@ Y_pred[, c("primary", "clear", "agriculture")] <- 1
 F_score(Y, Y_pred)
 ```
 
+I want to see how important it is to the loss function to accurately predict the less frequently occuring labels. I am going to take the actual values for the most frequently occuring labels as the predictions and leave the predictions for the other labels as zero. Then see what the $F_{2}$-score is.
+
+```{r}
+Y_pred <- matrix(0, ncol = ncol(Y), nrow = nrow(Y))
+colnames(Y_pred) <- colnames(Y)
+score <- NULL
+for(i in names(sort(apply(Y, 2, sum), decreasing = TRUE))) {
+  Y_pred[, i] <- Y[, i]
+  score[i] <- F_score(Y, Y_pred)
+}
+
+data.frame(label = names(sort(apply(Y, 2, sum), decreasing = TRUE)),
+           score = score) %>% 
+  mutate(label = factor(label, levels = names(sort(apply(Y, 2, sum), decreasing = TRUE)))) %>% 
+  ggplot(aes(label, score, group = 1)) +
+  geom_line() +
+  geom_point() +
+  theme_minimal() +
+  theme(axis.text.x = element_text(angle = 90, hjust = 1, vjust = 0.5))
+```
+
+It looks like the labels from *bare_ground* to *blow_down* are not that important to the loss function because they appear so infrequently. If Kaggle's test set has the same distribution, it might not be necessary to model the infrequent labels.
+
 # Basic Features Model
 
 Since it is computationally expensive to create a data matrix of the 3 band, $256\times256$ pixel, images, we first consider a data matrix containing only the following extracted features from each image (jpeg): the minimum, maximum, mean, kurtosis and skewness of each channel.
@@ -407,7 +430,7 @@ X_test <- read_csv("/home/jan/data/X-sum-jpg-test.csv") %>% as.matrix()
 We need an effective method to create multiple test-train splits to get valid error estimates. First I will do random sampling and then the stratified multi-label method.
 
 ```{r}
-train_ind <- sample(1:nrow(X), 20000)
+train_ind <- sample(1:nrow(X), 35000)
 x_train <- X[train_ind, ]
 x_valid <- X[-train_ind, ]
 
@@ -422,27 +445,61 @@ y_valid <- Y[-train_ind, ]
 ```{r}
 library(xgboost)
 
-weight <- as.numeric(dtrain[[32]]) * testsize / length(label)
+#weight <- as.numeric(dtrain[[32]]) * testsize / length(label)
 
-sumwpos <- sum(weight * (label==1.0))
-sumwneg <- sum(weight * (label==0.0))
+sumwpos <- sum(y_train[, "primary"] == 1) #sum(weight * (label==1.0))
+sumwneg <- sum(y_train[, "primary"] == 0) #sum(weight * (label==0.0))
 print(paste("weight statistics: wpos=", sumwpos, "wneg=", sumwneg, "ratio=", sumwneg / sumwpos))
 
-xgmat_train <- xgb.DMatrix(x_train, label = y_train[, "clear"])#, weight = weight, missing = -999.0)
-xgmat_valid <- xgb.DMatrix(x_valid, label = y_valid[, "clear"])
+xgmat_train <- xgb.DMatrix(x_train, label = y_train[, "primary"])#, weight = weight, missing = -999.0)
+xgmat_valid <- xgb.DMatrix(x_valid, label = y_valid[, "primary"])
 param <- list("objective" = "binary:logitraw",
-              #"scale_pos_weight" = sumwneg / sumwpos,
-              "bst:eta" = 0.3,
-              "bst:max_depth" = 6,
+              "scale_pos_weight" = sumwneg / sumwpos,
+              "bst:eta" = 1,
+              "gamma" = 0,
+              "bst:max_depth" = 10,
               "eval_metric" = "auc",
+              "eval_metric" = "error",
               "silent" = 1,
-              "nthread" = -1)
+              "nthread" = -1,
+              "lambda" = 0,
+              "alpha" = 0,
+              "subsample" = 1,
+              "colsample_bytree" = 0.8)
 watchlist <- list("train" = xgmat_train, "valid" = xgmat_valid)
-nround = 500
-print ("loading data end, start to boost trees")
-bst = xgb.train(param, xgmat_train, nround, watchlist );
+nround = 2000
+bst <- xgb.train(param, xgmat_train, nround, watchlist, print_every_n = 10)
+
+bst
+
 # save out model
 xgb.save(bst, "higgs.model")
 print ('finish training')
 ```
+
+## Utiml package
+
+```{r}
+library(utiml)
+
+# impute missing vals
+library(randomForest)
+X <- na.roughfix(X)
+X_test <- na.roughfix(X_test)
+
+
+mldr_train <- mldr_from_dataframe(data.frame(X, Y), labelIndices = (ncol(X)+1):(ncol(X)+ncol(Y)))
+
+mldr_train <- normalize_mldata(mldr_train)
+mldr_train <- remove_skewness_labels(mldr_train, 1000)
+
+mdata <- create_holdout_partition(mldr_train, c(train = 0.9, test = 0.1), "stratified")
+
+br_rf_model <- br(mdata$train, "RF", ntree = 500, cores = 12)
+br_svm_model <- br(mdata$train, "SVM", cores = 12)
+predictions <- predict(br_rf_model, mdata$test, cores = 12)
+results <- multilabel_evaluate(mdata$test, predictions)
+print(round(results, 3))
+```
+
 
