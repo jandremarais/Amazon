@@ -412,7 +412,7 @@ X <- do.call("rbind", X_list)
 dim(X)
 write_csv(data.frame(X), "/home/jan/data/X-sum-jpg.csv")
 X <- read_csv("/home/jan/data/X-sum-jpg.csv",
-              col_types = paste(rep("d", 24), collapse = "")) %>% as.matrix()
+              col_types = paste(rep("d", 18), collapse = "")) %>% as.matrix()
 
 X_list <- mclapply(list.files('/home/jan/data/test-jpg'), function(a) {
   img <- brick(paste("/home/jan/data/test-jpg", a, sep = "/"))
@@ -454,48 +454,11 @@ x_valid <- sapply(1:ncol(x_valid), function(a) {
 
 ## Training
 
-### xgboost
-
-```{r}
-library(xgboost)
-
-#weight <- as.numeric(dtrain[[32]]) * testsize / length(label)
-
-sumwpos <- sum(y_train[, "primary"] == 1) #sum(weight * (label==1.0))
-sumwneg <- sum(y_train[, "primary"] == 0) #sum(weight * (label==0.0))
-print(paste("weight statistics: wpos=", sumwpos, "wneg=", sumwneg, "ratio=", sumwneg / sumwpos))
-
-xgmat_train <- xgb.DMatrix(x_train, label = y_train[, "primary"])#, weight = weight, missing = -999.0)
-xgmat_valid <- xgb.DMatrix(x_valid, label = y_valid[, "primary"])
-param <- list("objective" = "binary:logitraw",
-              "scale_pos_weight" = sumwneg / sumwpos,
-              "bst:eta" = 1,
-              "gamma" = 0,
-              "bst:max_depth" = 10,
-              "eval_metric" = "auc",
-              "eval_metric" = "error",
-              "silent" = 1,
-              "nthread" = -1,
-              "lambda" = 0,
-              "alpha" = 0,
-              "subsample" = 1,
-              "colsample_bytree" = 0.8)
-watchlist <- list("train" = xgmat_train, "valid" = xgmat_valid)
-nround = 2000
-bst <- xgb.train(param, xgmat_train, nround, watchlist, print_every_n = 10)
-
-bst
-
-# save out model
-xgb.save(bst, "higgs.model")
-print ('finish training')
-```
-
 ## Utiml package
 
 ```{r}
 library(utiml)
-
+library(xgboost)
 # impute missing vals
 library(randomForest)
 #X <- na.roughfix(X)
@@ -510,8 +473,24 @@ mldr_train <- remove_skewness_labels(mldr_train, 1000)
 mdata <- create_holdout_partition(mldr_train, c(train = 0.9, test = 0.1), "stratified")
 
 br_rf_model <- br(mdata$train, "RF", ntrees = 100, cores = 12)
-br_svm_model <- br(mdata$train, "SVM", cores = 12)
-predictions <- predict(br_rf_model, mdata$test, cores = 12)
+
+rdbr_rf_model <- br(mdata$train, "XGB", nrounds = 1000, cores = 12,
+                   eta = 0.1,
+                   objective = "binary:logitraw",
+                   max_depth = 8)
+
+br_xgb_model <- br(mdata$train, "XGB", nrounds = 100, cores = 12,
+                   eta = 0.1,
+                   objective = "binary:logistic",
+                   max_depth = 5)
+
+cc_xgb_model <- cc(mdata$train, "XGB", nrounds = 1000, cores = 12,
+                   eta = 0.1,
+                   objective = "binary:logitraw",
+                   max_depth = 8)
+#br_svm_model <- br(mdata$train, "SVM", cores = 12)
+br_knn_model <- br(mdata$train, "KNN", k = 20, cores = 1)
+predictions <- predict(br_xgb_model, mdata$test, cores = 12)
 
 utiml_measure_f1 <- function (mlconfmat, ...) {
   #sum((5 * mlconfmat$TPi) / (mlconfmat$Zi + mlconfmat$Yi), na.rm = TRUE) /
@@ -524,6 +503,9 @@ temp <- multilabel_confusion_matrix(mdata$test, predictions)
 utiml_measure_f1(temp)
 results <- multilabel_evaluate(mdata$test, predictions)
 print(round(results, 3))
+
+newpred <- fixed_threshold(predictions, 0.4)
+summary(newpred)
 ```
 
 + I struggle to get good results with the `utiml` package. The package has nice utility functions but I feel a lack of control in the training process.
