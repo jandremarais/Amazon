@@ -80,7 +80,7 @@ print(mean(sapply(label_list[Y[, "cloudy"] == 1], length) == 1))
 
 example_files <- lapply(L, function(a) {
   train_labels[Y[, a] == 1, "image_name"] %>% 
-  slice(1:3) %>% 
+  dplyr::slice(1:3) %>% 
   unlist() %>% 
   paste0(".jpg")
 })
@@ -440,6 +440,16 @@ x_valid <- X[-train_ind, ]
 
 y_train <- Y[train_ind, ]
 y_valid <- Y[-train_ind, ]
+
+x_train <- sapply(1:ncol(x_train), function(a) {
+  vec <- x_train[, a]
+  (vec - mean(vec))/sd(vec)
+})
+
+x_valid <- sapply(1:ncol(x_valid), function(a) {
+  vec <- x_valid[, a]
+  (vec - mean(vec))/sd(vec)
+})
 ```
 
 ## Training
@@ -585,6 +595,39 @@ xgb.save(bst, "higgs.model")
 ```
 
 + very little success!
+
+## Clear
+
+```{r}
+label <- "clear"
+sumwpos <- sum(y_train[, label] == 1) #sum(weight * (label==1.0))
+sumwneg <- sum(y_train[, label] == 0) #sum(weight * (label==0.0))
+
+xgmat_train <- xgb.DMatrix(x_train, label = y_train[, label])#, weight = weight, missing = -999.0)
+xgmat_valid <- xgb.DMatrix(x_valid, label = y_valid[, label])
+param <- list("objective" = "binary:logitraw",
+              #"scale_pos_weight" = sumwneg / sumwpos,
+              "eta" = 0.01,
+              "gamma" = 0,
+              "max_depth" = 6,
+              "eval_metric" = "auc",
+              "eval_metric" = "error",
+              "silent" = 1,
+              "nthread" = -1,
+              "lambda" = 1,
+              "alpha" = 0,
+              "subsample" = 0.8,
+              "colsample_bytree" = 0.8)
+watchlist <- list("train" = xgmat_train, "valid" = xgmat_valid)
+nround = 2000
+bst <- xgb.train(param, xgmat_train, nrounds = nround, watchlist, print_every_n = 10)
+
+# randomForest
+library(randomForest)
+
+
+```
+
 
 + try replicating observations for each label and then do multi-class classification:
 
