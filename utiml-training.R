@@ -3,6 +3,8 @@ library(tidyverse)
 library(utiml)
 library(xgboost)
 library(randomForest)
+library(kknn)
+library(parallel)
 
 nCores <- detectCores()
 
@@ -12,6 +14,21 @@ utiml_measure_f2 <- function (mlconfmat, ...) {
   prec <- mlconfmat$TPi/(mlconfmat$TPi + mlconfmat$FPi)
   rec <- mlconfmat$TPi/(mlconfmat$TPi + mlconfmat$FNi)
   sum((1+2^2) * (prec*rec)/(2^2 * prec + rec), na.rm = TRUE)/nrow(mlconfmat$Y)
+}
+
+Fb_score <- function(act_mat, pred_mat, B = 2) {
+  # very slow
+  obs_scores <- sapply(1:nrow(act_mat), function(i) {
+    tp <- sum(act_mat[i, ] == pred_mat[i, ] & act_mat[i, ] == 1)
+    fp <- sum(act_mat[i, ] != pred_mat[i, ] & pred_mat[i, ] == 1)
+    fn <- sum(act_mat[i, ] != pred_mat[i, ] & pred_mat[i, ] == 0)
+    
+    prec <- tp/(tp+fp)
+    rec <- tp/(tp+fn)
+    
+    ifelse(tp != 0, (1+B^2) * (prec*rec)/(B^2 * prec + rec), 0)
+  })
+  mean(obs_scores)
 }
 
 ## Preproc
@@ -29,11 +46,54 @@ mdata <- create_holdout_partition(mldr_train, c(train = 0.9, valid = 0.1), "stra
 
 ## Training
 
-br_rf_model <- br(mdata$train, "RF", ntrees = 100, cores = nCores)
+br_rf_model <- br(mdata$train, "RF", ntrees = 200, cores = nCores)
+
+br_knn_model <- br(mdata$train, "KNN", k =15, cores = nCores)
+
+mbr_rf_model <- mbr(mdata$train, "RF", ntrees = 100, cores = nCores)
+
+brp_rf_model <- brplus(mdata$train, "RF", ntrees = 200, cores = nCores) # very poor
 
 ## Validation
 
 br_rf_prob_valid <- predict(br_rf_model, mdata$valid, cores = nCores)
+br_rf_pred_valid <- fixed_threshold(br_rf_prob_valid, 0.25)
+
+br_knn_prob_valid <- predict(br_knn_model, mdata$valid, cores = nCores)
+br_knn_pred_valid <- fixed_threshold(br_knn_prob_valid, 0.25)
+
+mbr_rf_prob_valid <- predict(mbr_rf_model, mdata$valid, cores = nCores)
+mbr_rf_pred_valid <- fixed_threshold(mbr_rf_prob_valid, 0.02)
+
+brp_rf_prob_valid <- predict(brp_rf_model, mdata$valid, cores = nCores)
+brp_rf_pred_valid <- fixed_threshold(brp_rf_prob_valid, 0.01)
+
+ensemble_prob_valid <- (br_rf_prob_valid+br_knn_prob_valid)/2
+ensemble_pred_valid <- fixed_threshold(ensemble_prob_valid, 0.2)
+
+confmat <- multilabel_confusion_matrix(mdata$valid, br_rf_pred_valid)
+utiml_measure_f2(confmat)
+
+Fb_score(mdata$valid$dataset[, mdata$valid$labels$index], as.matrix(br_rf_pred_valid))
+
+get_opt_cut <- function(probs, valid, try_these) {
+  sapply(1:ncol(probs), function(a) {
+    temp <- sapply(try_these, function(b) {
+      thresh <- rep(0.5, ncol(probs))
+      thresh[a] <- b
+      preds <- fixed_threshold(probs, thresh)
+      confmat <- multilabel_confusion_matrix(valid, preds)
+      utiml_measure_f2(confmat)
+    })
+    try_these[temp == max(temp)][1]
+  })
+}
+
+threshs <- get_opt_cut(br_rf_prob_valid, mdata$valid, seq(0.05, 0.3, 0.05))
+
+br_rf_pred_valid <- fixed_threshold(br_rf_prob_valid, threshs)
+confmat <- multilabel_confusion_matrix(mdata$valid, br_rf_pred_valid)
+utiml_measure_f2(confmat)
 
 ## Prediction
 
