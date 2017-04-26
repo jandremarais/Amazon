@@ -59,6 +59,9 @@ All of the classes are:
 library(tidyverse)
 library(stringr)
 train_labels <- read_csv("/home/jan/data/train.csv")
+rearrange_ind <- match(str_replace_all(list.files("/home/jan/data/train-jpg"), ".jpg", ""),
+                       train_labels$image_name)
+train_labels <- train_labels[rearrange_ind, ]
 label_list <- strsplit(train_labels$tags, " ")
 L <- unique(unlist(label_list))
 print(L)
@@ -402,22 +405,28 @@ library(parallel)
 X_list <- mclapply(list.files('/home/jan/data/train-jpg'), function(a) {
   img <- brick(paste("/home/jan/data/train-jpg", a, sep = "/"))
   c(apply(values(img), 2, function(a) {
-    c(summary(a),
+    c(mean = mean(a),
+      sd = sd(a),
+      min = min(a),
+      max = max(a),
       kurt = kurtosis(a),
       skew = skewness(a))
   }))
 }, mc.cores = 10)
 
 X <- do.call("rbind", X_list)
-dim(X)
+#dim(X)
 write_csv(data.frame(X), "/home/jan/data/X-sum-jpg.csv")
-X <- read_csv("/home/jan/data/X-sum-jpg.csv",
-              col_types = paste(rep("d", 18), collapse = "")) %>% as.matrix()
+#X <- read_csv("/home/jan/data/X-sum-jpg.csv",
+#              col_types = paste(rep("d", 18), collapse = "")) %>% as.matrix()
 
 X_list <- mclapply(list.files('/home/jan/data/test-jpg'), function(a) {
   img <- brick(paste("/home/jan/data/test-jpg", a, sep = "/"))
   c(apply(values(img), 2, function(a) {
-    c(summary(a),
+    c(mean = mean(a),
+      sd = sd(a),
+      min = min(a),
+      max = max(a),
       kurt = kurtosis(a),
       skew = skewness(a))
   }))
@@ -425,9 +434,20 @@ X_list <- mclapply(list.files('/home/jan/data/test-jpg'), function(a) {
 
 X_test <- do.call("rbind", X_list)
 write_csv(data.frame(X_test), "/home/jan/data/X-sum-jpg-test.csv")
-X_test <- read_csv("/home/jan/data/X-sum-jpg-test.csv", 
-                   col_types = paste(rep("d", 24), collapse = "")) %>% as.matrix()
+#X_test <- read_csv("/home/jan/data/X-sum-jpg-test.csv", 
+#                   col_types = paste(rep("d", 24), collapse = "")) %>% as.matrix()
 ```
+
++ made a huge mistake - the file order for `list.files()` is not the same as that from `train.csv`.
+
+Here is the correction (not yet, for now I am rearranging the Y matrix):
+
+```{r}
+list.files("/home/jan/data/train-jpg")[1:5]
+paste0(train_labels$image_name, ".jpg")[1:5]
+```
+
+
 
 ## Sampling
 
