@@ -17,6 +17,7 @@ write_csv(data.frame(Y), "/home/jan/data/labelmat.csv")
 
 ## Basic features
 
+library(raster)
 library(pbapply)
 library(moments)
 library(parallel)
@@ -54,3 +55,25 @@ X_list <- mclapply(list.files(path), function(a) {
 
 X_test <- do.call("rbind", X_list)
 write_csv(data.frame(X_test), "/home/jan/data/X-sum-jpg-test.csv")
+
+
+## Resize image to 32x32
+
+path <- '/home/jan/data/train-jpg'
+img <- brick(paste(path, "train_0.jpg", sep = "/"))
+svd_out <- svd(getValues(img$train_0.1, format = "matrix"))
+svd_out$u[, 1:64] %*% diag(svd_out$d[1:64]) %*% t(svd_out$v[, 1:64])
+
+ind <- seq(0, 256, 8)
+lapply(2:(length(ind)), function(a) {
+  width <- (ind[a-1]+1):(ind[a])
+  mean(values(img$train_0.1, format = "matrix")[width, width])
+})
+
+X_list <- mclapply(list.files(path)[1:10], function(a) {
+  img <- brick(paste(path, a, sep = "/"))
+  c(values(img))
+}, mc.cores = detectCores())
+
+X <- do.call("rbind", X_list)
+write_csv(data.frame(X), "/home/jan/data/X-sum-jpg.csv")
