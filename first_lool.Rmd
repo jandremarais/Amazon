@@ -417,8 +417,8 @@ X_list <- mclapply(list.files('/home/jan/data/train-jpg'), function(a) {
 X <- do.call("rbind", X_list)
 #dim(X)
 write_csv(data.frame(X), "/home/jan/data/X-sum-jpg.csv")
-#X <- read_csv("/home/jan/data/X-sum-jpg.csv",
-#              col_types = paste(rep("d", 18), collapse = "")) %>% as.matrix()
+X <- read_csv("/home/jan/data/X-sum-jpg.csv",
+              col_types = paste(rep("d", 18), collapse = "")) %>% as.matrix()
 
 X_list <- mclapply(list.files('/home/jan/data/test-jpg'), function(a) {
   img <- brick(paste("/home/jan/data/test-jpg", a, sep = "/"))
@@ -434,8 +434,8 @@ X_list <- mclapply(list.files('/home/jan/data/test-jpg'), function(a) {
 
 X_test <- do.call("rbind", X_list)
 write_csv(data.frame(X_test), "/home/jan/data/X-sum-jpg-test.csv")
-#X_test <- read_csv("/home/jan/data/X-sum-jpg-test.csv", 
-#                   col_types = paste(rep("d", 24), collapse = "")) %>% as.matrix()
+X_test <- read_csv("/home/jan/data/X-sum-jpg-test.csv", 
+                   col_types = paste(rep("d", 18), collapse = "")) %>% as.matrix()
 ```
 
 + made a huge mistake - the file order for `list.files()` is not the same as that from `train.csv`.
@@ -479,15 +479,11 @@ x_valid <- sapply(1:ncol(x_valid), function(a) {
 ```{r}
 library(utiml)
 library(xgboost)
-# impute missing vals
 library(randomForest)
-#X <- na.roughfix(X)
-#X_test <- na.roughfix(X_test)
-
 
 mldr_train <- mldr_from_dataframe(data.frame(X, Y), labelIndices = (ncol(X)+1):(ncol(X)+ncol(Y)))
 
-mldr_train <- normalize_mldata(mldr_train)
+#mldr_train <- normalize_mldata(mldr_train)
 #mldr_train <- remove_skewness_labels(mldr_train, 1000)
 
 mdata <- create_holdout_partition(mldr_train, c(train = 0.9, test = 0.1), "stratified")
@@ -510,9 +506,9 @@ cc_xgb_model <- cc(mdata$train, "XGB", nrounds = 1000, cores = 12,
                    max_depth = 8)
 #br_svm_model <- br(mdata$train, "SVM", cores = 12)
 br_knn_model <- br(mdata$train, "KNN", k = 20, cores = 1)
-predictions <- predict(br_xgb_model, mdata$test, cores = 12)
+predictions <- predict(br_rf_model, mdata$test, cores = 12)
 
-utiml_measure_f1 <- function (mlconfmat, ...) {
+utiml_measure_f2 <- function (mlconfmat, ...) {
   #sum((5 * mlconfmat$TPi) / (mlconfmat$Zi + mlconfmat$Yi), na.rm = TRUE) /
   #  nrow(mlconfmat$Y)
   prec <- mlconfmat$TPi/(mlconfmat$TPi + mlconfmat$FPi)
@@ -520,26 +516,38 @@ utiml_measure_f1 <- function (mlconfmat, ...) {
   sum((1+2^2) * (prec*rec)/(2^2 * prec + rec), na.rm = TRUE)/nrow(mlconfmat$Y)
 }
 temp <- multilabel_confusion_matrix(mdata$test, predictions)
-utiml_measure_f1(temp)
+utiml_measure_f2(temp)
 results <- multilabel_evaluate(mdata$test, predictions)
 print(round(results, 3))
 
 newpred <- pcut_threshold(predictions, ratio = mdata$train$labels[, "count"]/nrow(mdata$train$dataset))
 temp <- multilabel_confusion_matrix(mdata$test, newpred)
-utiml_measure_f1(temp)
+utiml_measure_f2(temp)
 
 newpred <- subset_correction(predictions, mdata$train)
 temp <- multilabel_confusion_matrix(mdata$test, newpred)
-utiml_measure_f1(temp)
+utiml_measure_f2(temp)
 multilabel_evaluate(mdata$test, newpred)
 
-newpred <- fixed_threshold(predictions, 0.2)
+newpred <- fixed_threshold(predictions, 0.25)
 temp <- multilabel_confusion_matrix(mdata$test, newpred)
-utiml_measure_f1(temp)
+utiml_measure_f2(temp)
 multilabel_evaluate(mdata$test, newpred)
 ```
 
-+ I struggle to get good results with the `utiml` package. The package has nice utility functions but I feel a lack of control in the training process.
+Creating a submission file for Kaggle:
+
+```{r}
+predictions <- predict(br_rf_model, data.frame(X_test), cores = 12)
+predictions <- ifelse(predictions > 0.2, 1, 0)
+pred_sub <- sapply(1:nrow(predictions), function(a) {
+  paste(colnames(predictions)[predictions[a, ] == 1], collapse = " ")
+})
+subm <- data.frame(image_name = str_replace_all(list.files("/home/jan/data/test-jpg"), ".jpg", ""),
+                   tags = pred_sub)
+write_csv(subm, "/home/jan/data/subm1.csv")
+```
+
 
 Let us try modelling each label manually, starting from the most frequent in decreasing order `r sort(apply(Y, 2, sum), decreasing = TRUE)`:
 
