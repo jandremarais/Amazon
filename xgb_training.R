@@ -1,8 +1,17 @@
 # training the same xgboost model for each label
+
+library(tidyverse)
+library(stringr)
+train_labels <- read_csv("/home/jan/data/train.csv")
+label_list <- strsplit(train_labels$tags, " ")
+L <- unique(unlist(label_list))
+
+Y <- sapply(L, function(b) sapply(label_list, function(a) ifelse(b %in% a, 1, 0)))
+
 X <- read_csv("/home/jan/data/X-sum-jpg.csv",
               col_types = paste(rep("d", 18), collapse = "")) %>% as.matrix()
 
-train_ind <- sample(1:nrow(X), 35000)
+train_ind <- sample(1:nrow(X), 40000)
 x_train <- X[train_ind, ]
 x_valid <- X[-train_ind, ]
 
@@ -36,7 +45,7 @@ for(label in colnames(y_train)) {
   predictions[, label] <- predict(mod, xgmat_valid)
 }
 
-newpred <- ifelse(predictions > 0.2, 1, 0)
+newpred <- ifelse(predictions > 0.1, 1, 0)
 #newpred <- pcut_threshold(predictions, ratio = apply(y_train, 2, mean)) %>% as.matrix()
 
 F_score(y_valid, newpred)

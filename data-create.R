@@ -50,7 +50,7 @@ X_list <- mclapply(list.files(path), function(a) {
       kurt = kurtosis(a),
       skew = skewness(a))
   }))
-}, mc.cores = 10)
+}, mc.cores = detectCores())
 
 X_test <- do.call("rbind", X_list)
 write_csv(data.frame(X_test), "/home/jan/data/X-sum-jpg-test.csv")
