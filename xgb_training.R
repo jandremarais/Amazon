@@ -1,17 +1,14 @@
-# training the same xgboost model for each label
+# training xgboost model for each label
 
 library(tidyverse)
 library(stringr)
-train_labels <- read_csv("/home/jan/data/train.csv")
-label_list <- strsplit(train_labels$tags, " ")
-L <- unique(unlist(label_list))
-
-Y <- sapply(L, function(b) sapply(label_list, function(a) ifelse(b %in% a, 1, 0)))
 
 X <- read_csv("/home/jan/data/X-sum-jpg.csv",
               col_types = paste(rep("d", 18), collapse = "")) %>% as.matrix()
 
-train_ind <- sample(1:nrow(X), 40000)
+Y <- read_csv("/home/jan/data/labelmat.csv") %>% as.matrix()
+
+train_ind <- sample(1:nrow(X), 36000)
 x_train <- X[train_ind, ]
 x_valid <- X[-train_ind, ]
 
@@ -19,6 +16,8 @@ y_train <- Y[train_ind, ]
 y_valid <- Y[-train_ind, ]
 
 library(xgboost)
+
+# primary
 
 param <- list("objective" = "binary:logistic",
               "scale_pos_weight" = 1,
