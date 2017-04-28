@@ -77,3 +77,36 @@ X_list <- mclapply(list.files(path)[1:10], function(a) {
 
 X <- do.call("rbind", X_list)
 write_csv(data.frame(X), "/home/jan/data/X-sum-jpg.csv")
+
+
+## creaing a dataset from the histograms of the images using EBImage
+
+source("https://bioconductor.org/biocLite.R")
+biocLite("EBImage")
+
+library(EBImage)
+library(pbapply)
+library(parallel)
+
+nCores <- detectCores()
+path <- '/home/jan/data/train-jpg'
+
+X_list <- mclapply(list.files(path), function(a) {
+  img <- readImage(paste(path, a, sep = "/"))
+  hist_data <- hist(img)
+  unlist(lapply(hist_data, "[[", "density"))
+}, mc.cores = nCores)
+
+X <- do.call("rbind", X_list)
+write_csv(data.frame(X), "/home/jan/data/X-hist-jpg.csv")
+
+path <- '/home/jan/data/test-jpg'
+
+X_list <- mclapply(list.files(path), function(a) {
+  img <- readImage(paste(path, a, sep = "/"))
+  hist_data <- hist(img)
+  unlist(lapply(hist_data, "[[", "density"))
+}, mc.cores = detectCores())
+
+X_test <- do.call("rbind", X_list)
+write_csv(data.frame(X_test), "/home/jan/data/X-hist-jpg-test.csv")

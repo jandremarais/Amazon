@@ -35,8 +35,12 @@ Fb_score <- function(act_mat, pred_mat, B = 2) {
 
 ## Preproc
 
+X <- read_csv("/home/jan/data/X-hist-jpg.csv",
+              col_types = paste(rep("d", 18), collapse = ""))
+
 X <- read_csv("/home/jan/data/X-sum-jpg.csv",
               col_types = paste(rep("d", 18), collapse = ""))
+
 Y <- read_csv("/home/jan/data/labelmat.csv")
 
 mldr_train <- mldr_from_dataframe(cbind(X, Y), labelIndices = (ncol(X)+1):(ncol(X)+ncol(Y)))
@@ -44,6 +48,7 @@ mldr_train <- mldr_from_dataframe(cbind(X, Y), labelIndices = (ncol(X)+1):(ncol(
 #mldr_train <- normalize_mldata(mldr_train)
 #mldr_train <- remove_skewness_labels(mldr_train, 1000)
 
+set.seed(1234)
 mdata <- create_holdout_partition(mldr_train, c(train = 0.9, valid = 0.1), "stratified")
 
 ## Training
@@ -130,7 +135,7 @@ Fb_score(mdata$valid$dataset[, mdata$valid$labels$index], as.matrix(br_rf_pred_v
 confmat <- multilabel_confusion_matrix(mdata$valid, br_xgb_pred_valid)
 utiml_measure_f2(confmat)
 
-# best is 0.8878513 for br(rf,svm,xgb,knn) ensemble
+# best is 0.8878513 for br(rf,svm,xgb,knn) ensemble with X-sum
 
 ## Prediction
 
