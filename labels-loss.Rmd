@@ -271,7 +271,7 @@ We see that this $F_{2}$-score weights the recall higher than the precision, *i.
 Let us see how this $F_{2}$ score acts on our data set. We have seen that *clear* and *primary* are the most common labels in the training set, followed by *agriculture*. Let us evaluate the $F_{2}$ score if we predict these 3 most common labels for each observation in the training set. First we need an R function for this measure. We create a function that takes the predicted and actual labels as indicator matrices and returns the $F_{2}$-score:
 
 ```{r}
-F_score <- function(act_mat, pred_mat, B = 2) {
+Fb_score <- function(act_mat, pred_mat, B = 2) {
   obs_scores <- sapply(1:nrow(act_mat), function(i) {
     tp <- sum(act_mat[i, ] == pred_mat[i, ] & act_mat[i, ] == 1)
     fp <- sum(act_mat[i, ] != pred_mat[i, ] & pred_mat[i, ] == 1)

@@ -52,10 +52,10 @@ br_rf_model <- br(mdata$train, "RF", ntrees = 200, cores = nCores)
 br_knn_model <- br(mdata$train, "KNN", k = 15, cores = nCores)
 
 br_xgb_model <- br(mdata$train, "XGB", 
-                   nrounds = 500,
-                   eta = 0.1,
+                   nrounds = 1000,
+                   eta = 0.01,
                    objective = "binary:logistic",
-                   max_depth = 5,
+                   max_depth = 10,
                    cores = nCores)
 
 mbr_rf_model <- mbr(mdata$train, "RF", ntrees = 100, cores = nCores)
