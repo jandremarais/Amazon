@@ -3,6 +3,7 @@ library(tidyverse)
 library(utiml)
 library(xgboost)
 library(randomForest)
+library(e1071)
 library(kknn)
 library(parallel)
 library(stringr)
@@ -47,9 +48,9 @@ mdata <- create_holdout_partition(mldr_train, c(train = 0.9, valid = 0.1), "stra
 
 ## Training
 
-br_rf_model <- br(mdata$train, "RF", ntrees = 200, cores = nCores)
+br_rf_model <- br(mdata$train, "RF", ntrees = 500, cores = nCores)
 
-br_knn_model <- br(mdata$train, "KNN", k = 15, cores = nCores)
+br_knn_model <- br(mdata$train, "KNN", k = 30, cores = nCores)
 
 br_xgb_model <- br(mdata$train, "XGB", 
                    nrounds = 1000,
@@ -57,6 +58,8 @@ br_xgb_model <- br(mdata$train, "XGB",
                    objective = "binary:logistic",
                    max_depth = 10,
                    cores = nCores)
+
+br_svm_model <- br(mdata$train, "SVM", kernel = "radial", cores = nCores)
 
 mbr_rf_model <- mbr(mdata$train, "RF", ntrees = 100, cores = nCores)
 
@@ -86,15 +89,20 @@ get_opt_cut <- function(probs, valid, try_these) {
 ###
 
 br_rf_prob_valid <- predict(br_rf_model, mdata$valid, cores = nCores)
-threshs <- get_opt_cut(br_rf_prob_valid, mdata$valid, seq(0.05, 0.4, 0.025))
-br_rf_pred_valid <- fixed_threshold(br_rf_prob_valid, threshs)
+br_rf_threshs <- get_opt_cut(br_rf_prob_valid, mdata$valid, seq(0.02, 0.4, 0.02))
+br_rf_pred_valid <- fixed_threshold(br_rf_prob_valid, br_rf_threshs)
 
 br_xgb_prob_valid <- predict(br_xgb_model, mdata$valid, cores = nCores)
-threshs <- get_opt_cut(br_xgb_prob_valid, mdata$valid, seq(0.05, 0.4, 0.025))
-br_xgb_pred_valid <- fixed_threshold(br_xgb_prob_valid, threshs)
+br_xgb_threshs <- get_opt_cut(br_xgb_prob_valid, mdata$valid, seq(0.02, 0.4, 0.02))
+br_xgb_pred_valid <- fixed_threshold(br_xgb_prob_valid, br_xgb_threshs)
 
 br_knn_prob_valid <- predict(br_knn_model, mdata$valid, cores = nCores)
-br_knn_pred_valid <- fixed_threshold(br_knn_prob_valid, 0.25)
+br_knn_threshs <- get_opt_cut(br_knn_prob_valid, mdata$valid, seq(0.02, 0.4, 0.02))
+br_knn_pred_valid <- fixed_threshold(br_knn_prob_valid, br_knn_threshs)
+
+br_svm_prob_valid <- predict(br_svm_model, mdata$valid, cores = nCores)
+br_svm_threshs <- get_opt_cut(br_svm_prob_valid, mdata$valid, seq(0.02, 0.4, 0.02))
+br_svm_pred_valid <- fixed_threshold(br_svm_prob_valid, br_svm_threshs)
 
 mbr_rf_prob_valid <- predict(mbr_rf_model, mdata$valid, cores = nCores)
 mbr_rf_pred_valid <- fixed_threshold(mbr_rf_prob_valid, 0.02)
@@ -105,16 +113,24 @@ brp_rf_pred_valid <- fixed_threshold(brp_rf_prob_valid, 0.01)
 cc_rf_prob_valid <- predict(cc_rf_model, mdata$valid, cores = nCores)
 cc_rf_pred_valid <- fixed_threshold(cc_rf_prob_valid, 0.25)
 
-ensemble_prob_valid <- (br_rf_prob_valid+br_knn_prob_valid)/2
-ensemble_pred_valid <- fixed_threshold(ensemble_prob_valid, 0.2)
+ensemble_prob_valid <- (br_xgb_prob_valid+br_knn_prob_valid+br_rf_prob_valid)/3
+threshs <- get_opt_cut(ensemble_prob_valid, mdata$valid, seq(0.02, 0.3, 0.02))
+ensemble_pred_valid <- fixed_threshold(ensemble_prob_valid, threshs)
 
-confmat <- multilabel_confusion_matrix(mdata$valid, br_rf_pred_valid)
+ensemble_pred_valid <- ifelse((br_xgb_pred_valid + 
+                                 br_rf_pred_valid + 
+                                 br_knn_pred_valid + 
+                                 br_svm_pred_valid) >= 2, 1, 0)
+
+confmat <- multilabel_confusion_matrix(mdata$valid, ensemble_pred_valid)
 utiml_measure_f2(confmat)
 
 Fb_score(mdata$valid$dataset[, mdata$valid$labels$index], as.matrix(br_rf_pred_valid))
 
 confmat <- multilabel_confusion_matrix(mdata$valid, br_xgb_pred_valid)
 utiml_measure_f2(confmat)
+
+# best is 0.8878513 for br(rf,svm,xgb,knn) ensemble
 
 ## Prediction
 
