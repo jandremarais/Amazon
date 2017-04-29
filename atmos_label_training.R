@@ -35,7 +35,7 @@ xgb_params <- list("objective" = "multi:softprob",
 
 cv_model <- xgb.cv(params = xgb_params,
                    data = train_matrix, 
-                   nrounds = 50,
+                   nrounds = 1000,
                    nfold = 5,
                    verbose = FALSE,
                    prediction = TRUE)
@@ -47,4 +47,21 @@ OOF_prediction <- data.frame(cv_model$pred) %>%
 library(caret)
 confusionMatrix(factor(OOF_prediction$label), 
                 factor(OOF_prediction$max_prob),
+                mode = "everything")
+
+
+bst_model <- xgb.train(params = xgb_params,
+                       data = train_matrix,
+                       nrounds = nround)
+# Predict hold-out test set
+test_pred <- predict(bst_model, newdata = test_matrix)
+test_prediction <- matrix(test_pred, nrow = numberOfClasses,
+                          ncol=length(test_pred)/numberOfClasses) %>%
+  t() %>%
+  data.frame() %>%
+  mutate(label = test_label + 1,
+         max_prob = max.col(., "last"))
+# confusion matrix of test set
+confusionMatrix(factor(test_prediction$label),
+                factor(test_prediction$max_prob),
                 mode = "everything")
