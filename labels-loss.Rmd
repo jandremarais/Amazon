@@ -39,6 +39,16 @@ The atmospheric condition labels are given to an image when:
 + *haze* - clouds are visible but they are not so opaque as to obscure the ground.
 + *clear* - no evidence of clouds are in the chips. 
 
+Check if some of the images have more than one atmospheric conditions:
+
+```{r}
+atmos_labels <- c("haze", "clear", "partly_cloudy", "cloudy")
+Y <- sapply(L, function(b) sapply(label_list, function(a) ifelse(b %in% a, 1, 0)))
+any(apply(Y[, atmos_labels], 1, sum)!=1)
+```
+
+Thus it seems in the training images the labelling of the atmospheric conditions can be seen as a multiclass problem, the rest as a multi-label problem.
+
 **Examples of cloudy scenes**
 
 ```{r Y, cache=TRUE}
