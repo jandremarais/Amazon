@@ -1,12 +1,98 @@
+# Multiclass learning the atmospheric labels
+
 library(tidyverse)
-library(stringr)
+library(caret)
 
-X <- read_csv("/home/jan/data/X-sum-jpg.csv",
-              col_types = paste(rep("d", 18), collapse = "")) %>% as.matrix()
+library(doMC)
+registerDoMC(cores = 4)
 
-Y <- read_csv("/home/jan/data/labelmat.csv") %>% 
-  select(haze, clear, partly_cloudy, cloudy) %>% 
-  as.matrix()
+atmos_labels <- c("clear", "haze", "partly_cloudy", "cloudy")
+
+X <- read_csv("X-summ-tif.csv",
+              col_types = paste(rep("d", 24), collapse = ""))
+Y <- read_csv("labelmat.csv") %>% select(one_of(atmos_labels)) %>% as.matrix()
+Y_vec <- apply(Y, 1, function(a) colnames(Y)[a == 1])
+
+D <- cbind(X, atmos = factor(Y_vec))
+
+set.seed(1000)
+train_ind <- sample(1:nrow(D), 36000)
+D_train <- D[train_ind, ]
+D_valid <- D[-train_ind, ]
+
+## LR
+
+library(glmnet)
+
+glmnet_cntrl <- trainControl(method = "cv",
+                             number = 5,
+                             classProbs = TRUE,
+                             allowParallel = TRUE)
+
+glmnet_grid <- expand.grid(alpha = c(0, 1, 2), lambda = c(0, 1, 2))
+
+glmnet_fit <- train(atmos ~ ., data = D_train,
+                    method = "glmnet",
+                    trControl = glmnet_cntrl,
+                    tuneGrid = glmnet_grid, 
+                    metric = "Kappa")
+
+glmnet_pred <- predict(glmnet_fit, D_valid)
+confusionMatrix(glmnet_pred, D_valid$atmos)
+
+#### acc = 0.8759
+
+## RF
+
+library(randomForest)
+
+rf_cntrl <- trainControl(method = "cv",
+                         number = 5,
+                         classProbs = TRUE,
+                         allowParallel = TRUE)
+
+rf_grid <- expand.grid(mtry = 3:7)
+
+rf_fit <- train(atmos ~ ., data = D_train,
+                method = "rf",
+                    trControl = rf_cntrl,
+                    tuneGrid = rf_grid)
+
+rf_pred <- predict(rf_fit, D_valid)
+confusionMatrix(rf_pred, D_valid$atmos)
+#### acc = .8918
+
+## trying MLR package
+library(mlr)
+library(parallelMap)
+parallelStartMulticore(3)
+
+atmos_task <- makeClassifTask(data = D, target = "atmos")
+rf_lrn <- makeLearner("classif.randomForest", predict.type = "response", mtry = 5, ntree = 700) #predict.threshold, par.vals
+
+train_ind <- sample(nrow(D), 36000)
+valid_ind <- setdiff(1:nrow(D), train_ind)
+
+params <- makeParamSet(
+  makeDiscreteParam("mtry", 3:8),
+  makeDiscreteParam("ntree", 100:1000)
+)
+
+ctrl <- makeTuneControlRandom(maxit = 100)
+
+rdesc <- makeResampleDesc("CV", iters = 5, stratify = TRUE)
+
+res <- tuneParams("classif.randomForest", task = atmos_task, resampling = rdesc,
+                  par.set = params, control = ctrl)
+
+r <- resample(rf_lrn, task, rdesc)
+rf_fit <- train(rf_lrn, task, subset = train_ind)
+pred <- predict(rf_fit, task, subset = valid_ind)
+performance(pred, measures = list(mmce, acc))
+
+parallelStop()
+
+## XGB
 
 y <- apply(Y, 1, function(a) colnames(Y)[a == 1])
 y <- factor(y, levels = c("clear", "haze", "partly_cloudy", "cloudy"))
