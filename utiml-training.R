@@ -19,18 +19,14 @@ utiml_measure_f2 <- function (mlconfmat, ...) {
 }
 
 Fb_score <- function(act_mat, pred_mat, B = 2) {
-  # very slow
-  obs_scores <- sapply(1:nrow(act_mat), function(i) {
-    tp <- sum(act_mat[i, ] == pred_mat[i, ] & act_mat[i, ] == 1)
-    fp <- sum(act_mat[i, ] != pred_mat[i, ] & pred_mat[i, ] == 1)
-    fn <- sum(act_mat[i, ] != pred_mat[i, ] & pred_mat[i, ] == 0)
+  mean(sapply(1:nrow(act_mat), function(a) {
+    tp <- sum(pred_mat[a, ] & act_mat[a, ])
     
-    prec <- tp/(tp+fp)
-    rec <- tp/(tp+fn)
+    prec <- tp/sum(pred_mat[a, ])
+    rec <- tp/sum(act_mat[a, ])
     
     ifelse(tp != 0, (1+B^2) * (prec*rec)/(B^2 * prec + rec), 0)
-  })
-  mean(obs_scores)
+  }))
 }
 
 ## Preproc
