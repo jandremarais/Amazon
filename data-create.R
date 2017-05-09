@@ -1,5 +1,11 @@
 # data set creation
 
+# to add to ipython notebook
+# y_train = np.array(y_train, np.uint8)
+# x_train = np.array(x_train, np.float16) / 255.
+# x_train = x_train[:,0,:]
+# np.savetxt("vgg16_probs_train.csv", x_train, delimiter=",")
+
 path <- "data"
 
 ## Label matrix
