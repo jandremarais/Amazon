@@ -1,19 +1,22 @@
 # data set creation
 
-path <- "."
+path <- "data"
 
 ## Label matrix
 
 library(tidyverse)
 library(stringr)
 
-train_labels <- read_csv(paste(path, "train.csv", sep = "/"))
+train_labels <- read_csv(paste(path, "train_v2.csv", sep = "/"))
 label_list <- strsplit(train_labels$tags, " ")
 L <- unique(unlist(label_list))
 
 Y <- ifelse(t(sapply(label_list, function(a) L %in% a)), 1, 0)
 colnames(Y) <- L
 #Y <- data.frame(id = train_labels$image_name, Y, stringsAsFactors = FALSE)
+
+# train_labels[apply(Y[,c("clear", "cloudy", "partly_cloudy", "haze")], 1, sum) == 0,]
+# note image train_24448 has no atmospheric labels -> should probably remove
 
 write_csv(data.frame(Y), "labelmat.csv")
 
@@ -27,8 +30,6 @@ library(raster)
 library(pbapply)
 library(moments)
 library(parallel)
-
-paste0(path, "/train-jpg/", train_labels$image_name, ".jpg")
 
 #source("https://bioconductor.org/biocLite.R")
 #biocLite("EBImage")
