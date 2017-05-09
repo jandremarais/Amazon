@@ -7,7 +7,7 @@ path <- "data"
 library(tidyverse)
 library(stringr)
 
-train_labels <- read_csv(paste(path, "train_v2.csv", sep = "/"))
+train_labels <- read_csv("data/train_v2.csv")
 label_list <- strsplit(train_labels$tags, " ")
 L <- unique(unlist(label_list))
 
@@ -18,7 +18,7 @@ colnames(Y) <- L
 # train_labels[apply(Y[,c("clear", "cloudy", "partly_cloudy", "haze")], 1, sum) == 0,]
 # note image train_24448 has no atmospheric labels -> should probably remove
 
-write_csv(data.frame(Y), "labelmat.csv")
+write_csv(data.frame(Y), "data/labelmat.csv")
 
 ## Features
 
@@ -61,7 +61,39 @@ write_csv(data.frame(X), "X-summ-jpg.csv")
 
 #### Summary statistics
 
-X_list <- mclapply(paste0(path, "/train-tif-v2/", train_labels$image_name, ".tif"), function(a) {
+temp <- c(imageData(readImage("data/train-tif-v2/train_0.tif"))[,,1])
+c(#mean = mean(dat),
+  summary(temp),
+  sd = sd(temp),
+  #min = min(dat),
+  #max = max(dat),
+  kurt = kurtosis(temp),
+  skew = skewness(temp))
+
+X_list <- mclapply(paste0("data/train-tif-v2/", train_labels$image_name, ".tif"), function(a) {
+  img <- readImage(a)
+  img_data <- imageData(img)
+  c(sapply(1:4, function(b) {
+    dat <- c(img_data[,,b])
+    c(#mean = mean(dat),
+      summary(dat),
+      sd = sd(dat),
+      #min = min(dat),
+      #max = max(dat),
+      kurt = kurtosis(dat),
+      skew = skewness(dat))
+  }))
+}, mc.cores = nCores)
+
+X <- do.call("rbind", X_list)
+
+#colnames(X) <- c(sapply(c("R", "G", "B", "NIR"), function(a) paste(a, c("mean", "sd", "min", "max", "kurtosis", "skewness"), sep = "_")))
+colnames(X) <- c(sapply(c("R", "G", "B", "NIR"), 
+                        function(a) paste(a, c("min", "Q1", "median", "mean", "Q3", "max", "sd", "kurtosis", "skewness"), sep = "_")))
+write_csv(data.frame(X), "data/X-summ-tif.csv")
+
+## test
+X_list <- mclapply(paste(path, "test-tif-v2", list.files(paste0(path, "/test-tif-v2/")), sep = "/"), function(a) {
   img <- readImage(a)
   img_data <- imageData(img)
   c(sapply(1:4, function(b) {
@@ -78,7 +110,6 @@ X_list <- mclapply(paste0(path, "/train-tif-v2/", train_labels$image_name, ".tif
 X <- do.call("rbind", X_list)
 
 colnames(X) <- c(sapply(c("R", "G", "B", "NIR"), function(a) paste(a, c("mean", "sd", "min", "max", "kurtosis", "skewness"), sep = "_")))
-write_csv(data.frame(X), "X-summ-tif.csv")
 
-img_temp <- readImage("./train-tif-v2/train_1.tif")
-plot(img_temp)
+write_csv(data.frame(X), paste(path, "X-summ-tif-test.csv", sep = "/"))
+

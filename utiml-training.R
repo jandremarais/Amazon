@@ -34,13 +34,13 @@ Fb_score <- function(act_mat, pred_mat, B = 2) {
 X <- read_csv("X-summ-jpg.csv",
               col_types = paste(rep("d", 18), collapse = ""))
 
-X <- read_csv("X-summ-tif.csv",
+X <- read_csv("data/X-summ-tif.csv",
               col_types = paste(rep("d", 24), collapse = ""))
 
 X <- read_csv("/home/jan/data/X-sum-jpg.csv",
               col_types = paste(rep("d", 18), collapse = ""))
 
-Y <- read_csv("labelmat.csv")
+Y <- read_csv("data/labelmat.csv")
 
 mldr_train <- mldr_from_dataframe(cbind(X, Y), labelIndices = (ncol(X)+1):(ncol(X)+ncol(Y)))
 
@@ -52,7 +52,7 @@ mdata <- create_holdout_partition(mldr_train, c(train = 0.9, valid = 0.1), "stra
 
 ## Training
 
-br_rf_model <- br(mdata$train, "RF", ntrees = 300, cores = nCores-1)
+br_rf_model <- br(mdata$train, "RF", ntrees = 700, mtry = 5, cores = nCores)
 
 br_knn_model <- br(mdata$train, "KNN", k = 30, cores = nCores)
 
@@ -82,18 +82,21 @@ get_opt_cut <- function(probs, valid, try_these) {
       thresh <- rep(0.5, ncol(probs))
       thresh[a] <- b
       preds <- fixed_threshold(probs, thresh)
-      confmat <- multilabel_confusion_matrix(valid, preds)
-      utiml_measure_f2(confmat)
+      #confmat <- multilabel_confusion_matrix(valid, preds)
+      #utiml_measure_f2(confmat)
+      Fb_score(as.matrix(valid), as.matrix(preds))
     })
     temp <- unlist(temp)
     try_these[temp == max(temp)][1]
   }, mc.cores = detectCores()))
 }
 
+Fb_score(mdata$valid$dataset[, mdata$valid$labels$index])
+
 ###
 
 br_rf_prob_valid <- predict(br_rf_model, mdata$valid, cores = nCores)
-br_rf_threshs <- get_opt_cut(br_rf_prob_valid, mdata$valid, seq(0.02, 0.4, 0.02))
+br_rf_threshs <- get_opt_cut(br_rf_prob_valid, mdata$valid$dataset[, mdata$valid$labels$index], seq(0.02, 0.4, 0.02))
 br_rf_pred_valid <- fixed_threshold(br_rf_prob_valid, br_rf_threshs)
 
 br_xgb_prob_valid <- predict(br_xgb_model, mdata$valid, cores = nCores)
@@ -129,7 +132,10 @@ ensemble_pred_valid <- ifelse((br_xgb_pred_valid +
 confmat <- multilabel_confusion_matrix(mdata$valid, ensemble_pred_valid)
 utiml_measure_f2(confmat)
 
-Fb_score(mdata$valid$dataset[, mdata$valid$labels$index], as.matrix(br_rf_pred_valid))
+Fb_score(as.matrix(mdata$valid$dataset[, mdata$valid$labels$index]), as.matrix(br_rf_pred_valid))
+
+Fb_score(as.matrix(mdata$valid$dataset[, mdata$valid$labels$index])[, c("cloudy", "haze", "partly_cloudy", "clear")], 
+         as.matrix(br_rf_pred_valid)[, c("cloudy", "haze", "partly_cloudy", "clear")])
 
 confmat <- multilabel_confusion_matrix(mdata$valid, br_rf_pred_valid)
 utiml_measure_f2(confmat)

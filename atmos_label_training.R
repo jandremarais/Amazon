@@ -8,9 +8,16 @@ registerDoMC(cores = 4)
 
 atmos_labels <- c("clear", "haze", "partly_cloudy", "cloudy")
 
-X <- read_csv("X-summ-tif.csv",
-              col_types = paste(rep("d", 24), collapse = ""))
-Y <- read_csv("labelmat.csv") %>% select(one_of(atmos_labels)) %>% as.matrix()
+train_labels <- read_csv("data/train_v2.csv")
+
+X <- read_csv("data/X-summ-tif.csv",
+              col_types = paste(rep("d", 36), collapse = "")) %>% 
+  filter(train_labels$image_name != "train_24448")# %>% 
+  #as.matrix()
+Y <- read_csv("data/labelmat.csv") %>% select(one_of(atmos_labels)) %>% 
+  filter(train_labels$image_name != "train_24448") %>% 
+  as.matrix()
+
 Y_vec <- apply(Y, 1, function(a) colnames(Y)[a == 1])
 
 D <- cbind(X, atmos = factor(Y_vec))
@@ -65,7 +72,7 @@ confusionMatrix(rf_pred, D_valid$atmos)
 ## trying MLR package
 library(mlr)
 library(parallelMap)
-parallelStartMulticore(3)
+parallelStartMulticore(12)
 
 atmos_task <- makeClassifTask(data = D, target = "atmos")
 rf_lrn <- makeLearner("classif.randomForest", predict.type = "response", mtry = 5, ntree = 700) #predict.threshold, par.vals
@@ -78,67 +85,61 @@ params <- makeParamSet(
   makeDiscreteParam("ntree", 100:1000)
 )
 
-ctrl <- makeTuneControlRandom(maxit = 100)
+ctrl <- makeTuneControlRandom(maxit = 50)
 
-rdesc <- makeResampleDesc("CV", iters = 5, stratify = TRUE)
+rdesc <- makeResampleDesc("CV", iters = 3, stratify = TRUE)
 
 res <- tuneParams("classif.randomForest", task = atmos_task, resampling = rdesc,
                   par.set = params, control = ctrl)
 
 r <- resample(rf_lrn, task, rdesc)
-rf_fit <- train(rf_lrn, task, subset = train_ind)
-pred <- predict(rf_fit, task, subset = valid_ind)
+rf_fit <- train(rf_lrn, atmos_task, subset = train_ind)
+pred <- predict(rf_fit, atmos_task, subset = valid_ind)
 performance(pred, measures = list(mmce, acc))
 
 parallelStop()
 
 ## XGB
 
-y <- apply(Y, 1, function(a) colnames(Y)[a == 1])
-y <- factor(y, levels = c("clear", "haze", "partly_cloudy", "cloudy"))
+y <- factor(Y_vec, levels = c("clear", "haze", "partly_cloudy", "cloudy"))
 y <- as.numeric(y) - 1 
-
-train_ind <- sample(1:nrow(X), 36000)
-x_train <- X[train_ind, ]
-x_valid <- X[-train_ind, ]
-
-y_train <- y[train_ind]
-y_valid <- y[-train_ind]
 
 library(xgboost)
 library(parallel)
 nCores <- detectCores()
 
-train_matrix <- xgb.DMatrix(x_train, label = y_train)
-valid_matrix <- xgb.DMatrix(x_valid, label = y_valid)
+oversamp <- function(data, response) {
+  y <- data[, response]
+  counts <- table(y)
+  max_lab <- names(counts)[counts == max(counts)]
+  rbind(data[y == max_lab, ],
+        do.call("rbind", lapply(names(counts[-1]), function(a) {
+          data[y == a, ][sample(counts[a], max(counts), replace = TRUE), ]
+        })))
+}
 
-nClasses <- max(y) + 1
+D_train_over <- oversamp(D_train, response = "atmos")
+
+train_matrix <- xgb.DMatrix(as.matrix(D_train_over[, -ncol(D_train_over)]), label = as.numeric(D_train_over$atmos) - 1)
+valid_matrix <- xgb.DMatrix(as.matrix(D_valid[, -ncol(D_valid)]), label = as.numeric(D_valid$atmos) - 1)
+
+nClasses <- ncol(Y)
 xgb_params <- list("objective" = "multi:softprob",
-                   "eval_metric" = "mlogloss",
+                   #"eval_metric" = "mlogloss",
                    "num_class" = nClasses,
                    "eta" = 0.1,
-                   "max_depth" = 10)
-
-cv_model <- xgb.cv(params = xgb_params,
-                   data = train_matrix, 
-                   nrounds = 1000,
-                   nfold = 5,
-                   verbose = FALSE,
-                   prediction = TRUE)
-
-OOF_prediction <- data.frame(cv_model$pred) %>%
-  mutate(max_prob = max.col(., ties.method = "last"),
-         label = y_train + 1)
-
-library(caret)
-confusionMatrix(factor(OOF_prediction$label), 
-                factor(OOF_prediction$max_prob),
-                mode = "everything")
-
+                   "max_depth" = 15,
+                   "subsample" = 0.8,
+                   "colsample_by_tree" = 0.8,
+                   "lambda" = 1)
 
 bst_model <- xgb.train(params = xgb_params,
                        data = train_matrix,
-                       nrounds = nround)
+                       nrounds = 1000,
+                       print_every_n = 10,
+                       verbose = TRUE, 
+                       watchlist = list(train = train_matrix, valid = valid_matrix))
+
 # Predict hold-out test set
 test_pred <- predict(bst_model, newdata = test_matrix)
 test_prediction <- matrix(test_pred, nrow = numberOfClasses,
